@@ -176,6 +176,22 @@ export default {
 				return jsonResponse(result);
 			}
 
+			// POST /checkout → Stripeチェックアウトセッションを模倣
+			if (request.method === 'POST' && pathname === '/checkout') {
+				const body = await request.json().catch(() => ({}));
+				const planId = body.planId;
+				if (!planId || planId === 'free') {
+					return jsonResponse({ error: 'Invalid plan' }, 400);
+				}
+				const sessionId = `mock_sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+				return jsonResponse({
+					sessionId,
+					url: '/pricing?success=true',
+					plan: planId,
+					status: 'mock_success',
+				});
+			}
+
 			if (request.method !== 'GET') {
 				return jsonResponse({ error: 'Method not allowed' }, 405);
 			}
@@ -390,6 +406,45 @@ export default {
 				}));
 
 				return jsonResponse({ results: movies });
+			}
+
+			// GET /pricing → プラン情報を返す
+			if (pathname === '/pricing') {
+				return jsonResponse({
+					plans: [
+						{
+							id: 'free',
+							name: 'Free',
+							price: 0,
+							currency: 'jpy',
+							interval: null,
+							features: [
+								'お気に入り5つまで登録',
+								'公開プロフィール',
+								'検索・閲覧',
+							],
+							cta: '現在のプラン',
+							current: true,
+						},
+						{
+							id: 'pro',
+							name: 'Pro',
+							price: 500,
+							currency: 'jpy',
+							interval: 'month',
+							features: [
+								'お気に入り無制限',
+								'AI趣味分析',
+								'カスタムOGP画像',
+								'優先サポート',
+								'広告非表示',
+							],
+							cta: 'アップグレード',
+							current: false,
+							popular: true,
+						},
+					],
+				});
 			}
 
 			return jsonResponse({ error: 'Not found' }, 404);

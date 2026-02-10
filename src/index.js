@@ -335,7 +335,7 @@ export default {
 				return jsonResponse({ analysis });
 			}
 
-			// GET /search/rankings?q=QUERY&rank=N → 全ユーザーのお気に入りから検索
+			// GET /search/rankings?q=QUERY&rank=N → ランキングアイテムをタイトルで検索
 			if (pathname === '/search/rankings') {
 				const query = url.searchParams.get('q');
 				if (!query) {
@@ -343,87 +343,60 @@ export default {
 				}
 				const rankFilter = url.searchParams.get('rank');
 
-				// Search favorites by title (ilike)
-				let favQuery = `select=title,slot,category,user_id,created_at&title=ilike.*${encodeURIComponent(query)}*&order=slot.asc&limit=50`;
+				let itemQuery = `select=id,title,rank,category_id,created_at&title=ilike.*${encodeURIComponent(query)}*&order=rank.asc&limit=50`;
 				if (rankFilter) {
-					favQuery += `&slot=eq.${rankFilter}`;
+					itemQuery += `&rank=eq.${rankFilter}`;
 				}
-				const favorites = await supabaseFetch(env, 'favorites', favQuery);
+				const items = await supabaseFetch(env, 'ranking_items', itemQuery);
 
-				if (favorites.length === 0) {
+				if (items.length === 0) {
 					return jsonResponse({ results: [], query });
 				}
 
-				// Get unique user IDs and fetch profiles
-				const userIds = [...new Set(favorites.map((f) => f.user_id))];
-				const profiles = await supabaseFetch(
+				// カテゴリ情報を取得してマージ
+				const catIds = [...new Set(items.map((item) => item.category_id))];
+				const categories = await supabaseFetch(
 					env,
-					'profiles',
-					`select=id,handle,display_name,is_public&id=in.(${userIds.join(',')})`
+					'categories',
+					`select=id,name,icon&id=in.(${catIds.join(',')})`
 				);
-				const profileMap = {};
-				for (const p of profiles) { profileMap[p.id] = p; }
+				const catMap = {};
+				for (const c of categories) { catMap[c.id] = c; }
 
-				// Merge and filter out private profiles
-				const results = favorites
-					.map((f) => {
-						const p = profileMap[f.user_id];
-						if (!p || !p.is_public) return null;
-						return {
-							title: f.title,
-							rank: f.slot,
-							category: f.category,
-							user: {
-								handle: p.handle,
-								display_name: p.display_name || p.handle,
-							},
-							created_at: f.created_at,
-						};
-					})
-					.filter(Boolean);
+				const results = items.map((item) => {
+					const cat = catMap[item.category_id];
+					return {
+						title: item.title,
+						rank: item.rank,
+						category: cat ? cat.name : '不明',
+						category_icon: cat ? cat.icon : '📋',
+						created_at: item.created_at,
+					};
+				});
 
 				return jsonResponse({ results, query });
 			}
 
-			// GET /stats/popular → 全ユーザーで最も多く登録されている作品トップ10
+			// GET /stats/popular → 各カテゴリの1位アイテム一覧
 			if (pathname === '/stats/popular') {
-				// Fetch all favorites from public users
-				const allFavorites = await supabaseFetch(
-					env,
-					'favorites',
-					'select=title,category,slot,user_id&order=created_at.desc&limit=500'
-				);
+				const [categories, topItems] = await Promise.all([
+					supabaseFetch(env, 'categories', 'select=id,name,icon&order=display_order.asc'),
+					supabaseFetch(env, 'ranking_items', 'select=title,rank,category_id&rank=lte.3&order=rank.asc'),
+				]);
 
-				// Get all public profiles
-				const allProfiles = await supabaseFetch(
-					env,
-					'profiles',
-					'select=id,is_public&is_public=eq.true'
-				);
-				const publicUserIds = new Set(allProfiles.map((p) => p.id));
+				const catMap = {};
+				for (const c of categories) { catMap[c.id] = c; }
 
-				// Count titles (only from public users), case-insensitive
-				const titleCounts = {};
-				const titleMeta = {};
-				for (const f of allFavorites) {
-					if (!publicUserIds.has(f.user_id)) continue;
-					const key = f.title.toLowerCase().trim();
-					titleCounts[key] = (titleCounts[key] || 0) + 1;
-					if (!titleMeta[key]) {
-						titleMeta[key] = { title: f.title, category: f.category };
-					}
-				}
-
-				// Sort by count and take top 10
-				const popular = Object.entries(titleCounts)
-					.sort((a, b) => b[1] - a[1])
-					.slice(0, 10)
-					.map(([key, count], i) => ({
+				const popular = topItems.map((item, i) => {
+					const cat = catMap[item.category_id];
+					return {
 						rank: i + 1,
-						title: titleMeta[key].title,
-						category: titleMeta[key].category,
-						count,
-					}));
+						title: item.title,
+						category: cat ? cat.name : '不明',
+						category_icon: cat ? cat.icon : '📋',
+						item_rank: item.rank,
+					};
+				}).slice(0, 20);
 
 				return jsonResponse({ popular });
 			}

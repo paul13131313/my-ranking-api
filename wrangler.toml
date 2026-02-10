@@ -1,0 +1,6 @@
+name = "my-ranking-api"
+main = "src/index.js"
+compatibility_date = "2025-04-01"
+
+[triggers]
+crons = ["0 23 * * *"]

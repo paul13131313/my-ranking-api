@@ -201,6 +201,81 @@ export default {
 				return jsonResponse({ message: 'MY RANKING API v2.0' });
 			}
 
+			// GET /health → 各サービスの接続確認
+			if (pathname === '/health') {
+				const checks = {};
+				const start = Date.now();
+
+				// Supabase接続確認
+				try {
+					const t0 = Date.now();
+					const res = await fetch(`${env.SUPABASE_URL}/rest/v1/categories?select=id&limit=1`, {
+						headers: {
+							apikey: env.SUPABASE_ANON_KEY,
+							Authorization: `Bearer ${env.SUPABASE_ANON_KEY}`,
+						},
+					});
+					checks.supabase = {
+						status: res.ok ? 'ok' : 'error',
+						latency_ms: Date.now() - t0,
+						http_status: res.status,
+					};
+				} catch (e) {
+					checks.supabase = { status: 'error', error: e.message };
+				}
+
+				// Claude API接続確認（キーの有効性のみ）
+				try {
+					const t0 = Date.now();
+					const res = await fetch('https://api.anthropic.com/v1/messages', {
+						method: 'POST',
+						headers: {
+							'Content-Type': 'application/json',
+							'x-api-key': env.ANTHROPIC_API_KEY,
+							'anthropic-version': '2023-06-01',
+						},
+						body: JSON.stringify({
+							model: 'claude-sonnet-4-5-20250929',
+							max_tokens: 1,
+							messages: [{ role: 'user', content: 'ping' }],
+						}),
+					});
+					// 200 or 400 means key is valid; 401 means invalid
+					const keyValid = res.status !== 401 && res.status !== 403;
+					checks.claude_api = {
+						status: keyValid ? 'ok' : 'error',
+						latency_ms: Date.now() - t0,
+						http_status: res.status,
+					};
+				} catch (e) {
+					checks.claude_api = { status: 'error', error: e.message };
+				}
+
+				// TMDb API接続確認
+				try {
+					const t0 = Date.now();
+					const res = await fetch(
+						`https://api.themoviedb.org/3/configuration?api_key=${env.TMDB_API_KEY}`
+					);
+					checks.tmdb_api = {
+						status: res.ok ? 'ok' : 'error',
+						latency_ms: Date.now() - t0,
+						http_status: res.status,
+					};
+				} catch (e) {
+					checks.tmdb_api = { status: 'error', error: e.message };
+				}
+
+				const allOk = Object.values(checks).every((c) => c.status === 'ok');
+
+				return jsonResponse({
+					status: allOk ? 'healthy' : 'degraded',
+					total_latency_ms: Date.now() - start,
+					checks,
+					timestamp: new Date().toISOString(),
+				});
+			}
+
 			// GET /rankings → カテゴリ一覧
 			if (pathname === '/rankings') {
 				const data = await supabaseFetch(env, 'categories', 'select=id,name,icon,display_order&order=display_order.asc');

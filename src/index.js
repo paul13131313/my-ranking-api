@@ -102,6 +102,64 @@ async function handleDigest(env) {
 	return { success: true, item: picked.title, trivia, message };
 }
 
+function escapeXml(s) {
+	return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function generateOgpSvg(categoryName, categoryIcon, items) {
+	const medals = ['🥇', '🥈', '🥉'];
+	const top3 = items
+		.sort((a, b) => a.rank - b.rank)
+		.slice(0, 3);
+
+	const itemLines = top3.map((item, i) => {
+		const y = 310 + i * 80;
+		return `
+			<text x="140" y="${y}" font-size="36" fill="#aaa" font-family="sans-serif">${medals[i] || ''}</text>
+			<text x="200" y="${y}" font-size="34" fill="#e8e6e3" font-family="sans-serif" font-weight="600">${escapeXml(item.title)}</text>
+		`;
+	}).join('');
+
+	return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+	<defs>
+		<linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+			<stop offset="0%" style="stop-color:#0a0a0c"/>
+			<stop offset="50%" style="stop-color:#141420"/>
+			<stop offset="100%" style="stop-color:#0a0a1a"/>
+		</linearGradient>
+		<linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+			<stop offset="0%" style="stop-color:#f0c040"/>
+			<stop offset="100%" style="stop-color:#e8a04c"/>
+		</linearGradient>
+	</defs>
+
+	<!-- Background -->
+	<rect width="1200" height="630" fill="url(#bg)"/>
+
+	<!-- Top accent line -->
+	<rect x="0" y="0" width="1200" height="4" fill="url(#accent)"/>
+
+	<!-- Border frame -->
+	<rect x="40" y="40" width="1120" height="550" rx="24" fill="none" stroke="#2a2a32" stroke-width="2"/>
+
+	<!-- Logo -->
+	<text x="100" y="120" font-size="48" fill="#f0c040" font-family="Georgia, serif" font-weight="700">MY RANKING</text>
+
+	<!-- Divider -->
+	<line x1="100" y1="150" x2="1100" y2="150" stroke="#2a2a32" stroke-width="1"/>
+
+	<!-- Category title -->
+	<text x="100" y="210" font-size="28" fill="#8a8890" font-family="sans-serif" font-weight="500">${escapeXml(categoryIcon)} ${escapeXml(categoryName)}ランキング</text>
+
+	<!-- Ranking items -->
+	${itemLines}
+
+	<!-- Bottom accent -->
+	<rect x="100" y="540" width="200" height="3" fill="url(#accent)" rx="2"/>
+	<text x="100" y="575" font-size="18" fill="#555" font-family="sans-serif">my-ranking.vercel.app</text>
+</svg>`;
+}
+
 export default {
 	async fetch(request, env) {
 		const url = new URL(request.url);
@@ -184,6 +242,30 @@ export default {
 				const analysis = claudeData.content?.[0]?.text || '分析できませんでした。';
 
 				return jsonResponse({ analysis });
+			}
+
+			// GET /ogp/:categoryId → OGP画像(SVG)を生成
+			const ogpMatch = pathname.match(/^\/ogp\/([^/]+)$/);
+			if (ogpMatch) {
+				const categoryId = ogpMatch[1];
+				const categories = await supabaseFetch(env, 'categories', `select=id,name,icon&id=eq.${categoryId}`);
+				if (!categories.length) {
+					return jsonResponse({ error: 'Category not found' }, 404);
+				}
+				const cat = categories[0];
+				const items = await supabaseFetch(
+					env,
+					'ranking_items',
+					`select=title,rank,category_id&category_id=eq.${categoryId}&order=rank.asc&limit=3`
+				);
+				const svg = generateOgpSvg(cat.name, cat.icon, items);
+				return new Response(svg, {
+					headers: {
+						'Content-Type': 'image/svg+xml',
+						'Cache-Control': 'public, max-age=3600',
+						...corsHeaders,
+					},
+				});
 			}
 
 			// GET /search/movie?q=QUERY → TMDb APIで映画検索

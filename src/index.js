@@ -244,6 +244,99 @@ export default {
 				return jsonResponse({ analysis });
 			}
 
+			// GET /search/rankings?q=QUERY&rank=N → 全ユーザーのお気に入りから検索
+			if (pathname === '/search/rankings') {
+				const query = url.searchParams.get('q');
+				if (!query) {
+					return jsonResponse({ error: 'Missing query parameter "q"' }, 400);
+				}
+				const rankFilter = url.searchParams.get('rank');
+
+				// Search favorites by title (ilike)
+				let favQuery = `select=title,slot,category,user_id,created_at&title=ilike.*${encodeURIComponent(query)}*&order=slot.asc&limit=50`;
+				if (rankFilter) {
+					favQuery += `&slot=eq.${rankFilter}`;
+				}
+				const favorites = await supabaseFetch(env, 'favorites', favQuery);
+
+				if (favorites.length === 0) {
+					return jsonResponse({ results: [], query });
+				}
+
+				// Get unique user IDs and fetch profiles
+				const userIds = [...new Set(favorites.map((f) => f.user_id))];
+				const profiles = await supabaseFetch(
+					env,
+					'profiles',
+					`select=id,handle,display_name,is_public&id=in.(${userIds.join(',')})`
+				);
+				const profileMap = {};
+				for (const p of profiles) { profileMap[p.id] = p; }
+
+				// Merge and filter out private profiles
+				const results = favorites
+					.map((f) => {
+						const p = profileMap[f.user_id];
+						if (!p || !p.is_public) return null;
+						return {
+							title: f.title,
+							rank: f.slot,
+							category: f.category,
+							user: {
+								handle: p.handle,
+								display_name: p.display_name || p.handle,
+							},
+							created_at: f.created_at,
+						};
+					})
+					.filter(Boolean);
+
+				return jsonResponse({ results, query });
+			}
+
+			// GET /stats/popular → 全ユーザーで最も多く登録されている作品トップ10
+			if (pathname === '/stats/popular') {
+				// Fetch all favorites from public users
+				const allFavorites = await supabaseFetch(
+					env,
+					'favorites',
+					'select=title,category,slot,user_id&order=created_at.desc&limit=500'
+				);
+
+				// Get all public profiles
+				const allProfiles = await supabaseFetch(
+					env,
+					'profiles',
+					'select=id,is_public&is_public=eq.true'
+				);
+				const publicUserIds = new Set(allProfiles.map((p) => p.id));
+
+				// Count titles (only from public users), case-insensitive
+				const titleCounts = {};
+				const titleMeta = {};
+				for (const f of allFavorites) {
+					if (!publicUserIds.has(f.user_id)) continue;
+					const key = f.title.toLowerCase().trim();
+					titleCounts[key] = (titleCounts[key] || 0) + 1;
+					if (!titleMeta[key]) {
+						titleMeta[key] = { title: f.title, category: f.category };
+					}
+				}
+
+				// Sort by count and take top 10
+				const popular = Object.entries(titleCounts)
+					.sort((a, b) => b[1] - a[1])
+					.slice(0, 10)
+					.map(([key, count], i) => ({
+						rank: i + 1,
+						title: titleMeta[key].title,
+						category: titleMeta[key].category,
+						count,
+					}));
+
+				return jsonResponse({ popular });
+			}
+
 			// GET /ogp/:categoryId → OGP画像(SVG)を生成
 			const ogpMatch = pathname.match(/^\/ogp\/([^/]+)$/);
 			if (ogpMatch) {

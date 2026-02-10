@@ -447,6 +447,90 @@ export default {
 				});
 			}
 
+			// GET /admin/stats → サービス全体の統計
+			if (pathname === '/admin/stats') {
+				const [categories, rankingItems] = await Promise.all([
+					supabaseFetch(env, 'categories', 'select=id,name,icon,display_order&order=display_order.asc'),
+					supabaseFetch(env, 'ranking_items', 'select=id,title,rank,category_id,created_at'),
+				]);
+
+				const today = new Date().toISOString().slice(0, 10);
+				const newItemsToday = rankingItems.filter((item) => item.created_at && item.created_at.startsWith(today)).length;
+
+				// カテゴリ別アイテム数
+				const categoryItemCounts = categories.map((cat) => ({
+					id: cat.id,
+					name: cat.name,
+					icon: cat.icon,
+					count: rankingItems.filter((item) => item.category_id === cat.id).length,
+				}));
+
+				// ランク別の分布
+				const rankDistribution = {};
+				for (const item of rankingItems) {
+					rankDistribution[item.rank] = (rankDistribution[item.rank] || 0) + 1;
+				}
+
+				return jsonResponse({
+					totalCategories: categories.length,
+					totalRankingItems: rankingItems.length,
+					newItemsToday,
+					categoryItemCounts,
+					rankDistribution,
+				});
+			}
+
+			// GET /admin/users → カテゴリ一覧（詳細）
+			if (pathname === '/admin/users') {
+				const [categories, rankingItems] = await Promise.all([
+					supabaseFetch(env, 'categories', 'select=id,name,icon,display_order&order=display_order.asc'),
+					supabaseFetch(env, 'ranking_items', 'select=id,title,rank,category_id'),
+				]);
+
+				const categoryDetails = categories.map((cat) => {
+					const items = rankingItems
+						.filter((item) => item.category_id === cat.id)
+						.sort((a, b) => a.rank - b.rank);
+					return {
+						id: cat.id,
+						name: cat.name,
+						icon: cat.icon,
+						display_order: cat.display_order,
+						items_count: items.length,
+						top3: items.slice(0, 3).map((item) => ({ rank: item.rank, title: item.title })),
+					};
+				});
+
+				return jsonResponse({ categories: categoryDetails });
+			}
+
+			// GET /admin/activity → 直近のアクティビティ（ランキングアイテムの更新）
+			if (pathname === '/admin/activity') {
+				const recentItems = await supabaseFetch(
+					env,
+					'ranking_items',
+					'select=id,title,rank,category_id,created_at&order=created_at.desc&limit=20'
+				);
+
+				const categories = await supabaseFetch(env, 'categories', 'select=id,name,icon');
+				const catMap = {};
+				for (const c of categories) { catMap[c.id] = c; }
+
+				const activities = recentItems.map((item) => {
+					const cat = catMap[item.category_id];
+					return {
+						type: 'created',
+						title: item.title,
+						rank: item.rank,
+						category_name: cat ? cat.name : '不明',
+						category_icon: cat ? cat.icon : '📋',
+						timestamp: item.created_at,
+					};
+				});
+
+				return jsonResponse({ activities });
+			}
+
 			return jsonResponse({ error: 'Not found' }, 404);
 		} catch (err) {
 			return jsonResponse({ error: err.message }, 500);

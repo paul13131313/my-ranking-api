@@ -278,7 +278,7 @@ export default {
 
 			// GET /rankings → カテゴリ一覧
 			if (pathname === '/rankings') {
-				const data = await supabaseFetch(env, 'categories', 'select=id,name,icon,display_order&order=display_order.asc');
+				const data = await supabaseFetch(env, 'categories', 'select=id,name,name_en,icon,display_order&order=display_order.asc');
 				return jsonResponse(data);
 			}
 
@@ -289,7 +289,7 @@ export default {
 				const data = await supabaseFetch(
 					env,
 					'ranking_items',
-					`select=id,title,rank,category_id&category_id=eq.${categoryId}&order=rank.asc`
+					`select=id,title,title_en,rank,category_id&category_id=eq.${categoryId}&order=rank.asc`
 				);
 				return jsonResponse(data);
 			}
@@ -343,7 +343,7 @@ export default {
 				}
 				const rankFilter = url.searchParams.get('rank');
 
-				let itemQuery = `select=id,title,rank,category_id,created_at&title=ilike.*${encodeURIComponent(query)}*&order=rank.asc&limit=50`;
+				let itemQuery = `select=id,title,title_en,rank,category_id,created_at&title=ilike.*${encodeURIComponent(query)}*&order=rank.asc&limit=50`;
 				if (rankFilter) {
 					itemQuery += `&rank=eq.${rankFilter}`;
 				}
